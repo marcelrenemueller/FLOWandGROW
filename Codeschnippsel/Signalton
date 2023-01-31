@@ -1,0 +1,51 @@
+//Standardlib
+#include <stdio.h>
+#include <Arduino.h>
+
+#define TONE_USE_INT
+#define TONE_PITCH 440
+#include <Pitch.h>
+#define leakdetector 2
+
+void setup() {
+  pinMode(leakdetector,INPUT_PULLUP);
+}
+
+//------------------------------------------------------------------------------------
+
+//Voreinstellungen für Zeitgersteuertes Schalten der akustischen Alarmsignalisierung
+//Vorherige Zeit wird hier abgespeichert
+unsigned long previousMillisPauseBuzzer=0;
+//Intervall des Toggelzustandes
+int intervalPauseBuzzer = 900;
+//Statusvariable um den Digitalen Ausgang zu setzen
+boolean PauseBuzzerState = false;  
+
+
+//------------------------------------------------------------------------------------
+
+//Funktion für die Ansteuerung der aktustischen Alarmsignalisierung
+void buzzer(){
+  if (PauseBuzzerState==HIGH){
+    tone(4,1000);  //1.Pos: Digitaler Ausgang / 2.Pos: Frequenz (Tonlage in Hz)
+  }
+  else{
+    noTone(4);   //Ausschalten des Ausganges
+  }
+}
+
+
+
+void loop() {
+if (digitalRead(leakdetector) == LOW){
+   unsigned long currentMillis = millis();
+    if ((unsigned long)(currentMillis - previousMillisPauseBuzzer) >= intervalPauseBuzzer) {
+      buzzer();
+      PauseBuzzerState = !PauseBuzzerState;
+      previousMillisPauseBuzzer = currentMillis;
+  }
+}
+else{
+    noTone(4);   //Ausschalten des Ausganges
+}
+}
