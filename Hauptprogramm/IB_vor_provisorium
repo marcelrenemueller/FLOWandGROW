@@ -1,0 +1,1504 @@
+//1.
+//Bibliotheken und relevante Aufrufe der Bibliotheken
+
+//Standard-Bibiliotheken
+#include <Arduino.h>   //Arduino-Standardlib
+#include <stdio.h>    //Standardlib
+#include <OneWire.h>  //Bibliothek für 1-Leiter-Bussysteme (Wassertemp. / DHT11)
+#include <SPI.h>      //???
+#include <Wire.h>     //I2C
+//#include <avr/power.h>  // Spannungsausfall
+
+//Biblitheken RTC
+#include <RTClib.h>   //Realtime-Clock
+
+//Bibliotheken für NEXTION-Display
+#include <EasyNextionLibrary.h>
+#include <Arduino.h>
+#include <EEPROM.h>
+
+
+//Bibliotheken für Luftqualitätsmessung (I2C)
+#include <Adafruit_CCS811.h>
+Adafruit_CCS811 ccs;
+//Bibliothek für Feuchte und Temp.sensor (I2C)
+#include <ClosedCube_HDC1080.h>
+ClosedCube_HDC1080 hdc1080;
+
+
+//Bibliothek für DHTXX-Temperatur-/Feuchtesensoren 
+#include <DHT.h>
+#include <DallasTemperature.h>
+
+//-------------------------------------------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------------------------------------------
+//2.
+//Deklerationen / DEFINE / Hilfsmerker
+//Erstellung eines Arrays für Zeitdaten
+RTC_DS3231 rtc;
+char Days_Of_The_Week[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+//-------------------------------------------------------------------------------------------------------------------------------------
+//DHT11 Temperatur und Feuchtesensoren
+//Technikebene
+#define DHTPIN1 10          //Angabe des verwendeten PIN´s
+//Sensor für die Mittelwertbildung im NFT-Bereich
+#define DHTPIN2 30          //Angabe des verwendeten PIN´s
+
+//Sensorentyp festlegen
+#define DHTTYPE DHT11
+
+//Zuweisung des Typs und Pins
+//Technikebene
+DHT dht1(DHTPIN1, DHTTYPE);
+//Sensor 16B1 für die Mittelwertbildung
+DHT dht2(DHTPIN2, DHTTYPE);
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Füllstandsensor für Volumenmessung
+const int trigPin = 25; //set pin variables
+const int echoPin = 26;
+//-------------------------------------------------------------------------------------------------------------------------------------
+//PH-Messung
+#define SensorPin A0          //Analoger Eingang für das Auslesen des pH-Wertes
+#define offsetPH -0.6           //Abweichung hier kompensieren davor 0.3 --> eingestellt nach erneuter Kalibrierung -0.2
+#define ArrayLenthPH 10        //Anzahl der Datenspeicher im Array um den Mittelwert des PH-Wertes zu ermitteln
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Leckageüberwachung
+#define leakage 27
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Pumpen, Lüfter und Licht (Digitale Ausgänge)
+//Pumpen
+#define pumpNFT 2               //Hauptpumpe
+bool pumpNFTstatus = false;     //Hauptpumpe Hilfsmerker
+#define pumpEC 7                //Dosierpumpe EC
+#define pumpPH 6                //Dosierpumpe PH
+
+//Lüftung
+#define ventilator 5            //Ablüfter
+
+//Beleuchtung
+#define lightNFT 3              //NFT-Licht
+#define lightGrowing 4          //Anzucht-Licht
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Display Paramaeter von davor - kann vermutlich weg
+#define navigationButton 13
+boolean pressedButton = false;      
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Akustisches Signal (Vorhaltung für seperaten Buzzer)
+#define alarmTone 44  	  //PWM-Ansteuerung des Buzzers
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Terminal Fühler - Wassertemperatur
+#define ONE_WIRE_BUS 8                //Datenpin vom Temp.Sensor
+OneWire oneWire(ONE_WIRE_BUS);        //Buskommunikation Sensor
+DallasTemperature sensors(&oneWire);  //Buskommunikation Sensor
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Schnittstelle einstellen für das NEXTION-Display (RX1/TX1)
+EasyNex myNex(Serial1);
+//-------------------------------------------------------------------------------------------------------------------------------------
+
+
+//-------------------------------------------------------------------------------------------------------------------------------------
+//3.
+//Variablen für die EC-Messung
+//Hinweis: Die Variablen müssen vor dem Setup angelegt werden --> Kalbrierungsfunktion wird im Setup aufgerufen !
+//Variablen für die EC-Messung
+int R1= 1000;                   //Wert des Widerstandes für die EC-Messung über den Stecker
+int EC_Read = A2;               //AI: Analoger Wert über Spannungsteiler auslesen 
+int ECPower = A1;               //AO: 5V Spannung über den Stecker ins Wasser geleitet
+float Temp_C;                   //Temp in Celcius
+float Temp_F;                   //Temp in Fahrenheit für internationalen Standard
+float Temp1_Value = 0;          //Speicherwert für die Vergleichsmessung
+float Temp_Coef = 0.019;        //Temperatur Koeffizient 
+//float constanttemp = 18.800;  //Zum Kalibrieren --> NORMAL auskommentieren ??????????????????????????????????????????????????????????????????????????????????????????????????????????????ßß
+float offsetTempEC=-0.15;              //Temperaturoffset --> abgeglichen mit EC/PPM/PH-Messgerät
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Relevant NUR für Kalibrierung (ACHTUNG!)
+float Calibration_PPM = 325;                   //gemessener Wert mit anderem Messgerät
+float K= 0.06;                                   //Vor der Kalibrierung: 2.4 --> Vergleichswert bei der Kalbrierung muss geändert werden
+float PPM_Con=0.5;                              //TDS Factor --> im Datenblatt des Messgerätes enthalten
+float CalibrationEC= (Calibration_PPM*2)/1000;  //Vergleich für die EC-Messung
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Variablen für die EC-Messung
+float Temperature;  //gemessene Temperatur über Terminalfühler
+float EC;           //Errechneter EC-Wert
+float offsetEC = 0.05;    //Kompenstation EC (invertierte Logik)
+float EC_at_25 = 0;       //EC-Wert bei 25 Grad
+int ppm;            //Errechneter Wert der Anzahl der Teilchen der Lösung in PartsPerMillion
+float A_to_D= 0;    //was Ist das genau
+float Vin= 5;       //angegebener Wert der Spannung für die Messung
+float Vdrop= 0;     //Angabe für Rechteckssignal
+float R_Water;      //Widerstand des Wassers
+float Value=0;      //Speicherung des Zwischenwerts
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Dekleration NEXTION-Variablen (Speicherung im EEPROM) (Anpassung!)
+
+int iPumpOn = 0; // Einschaltzyklus Pumpe (min)
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Test LED
+# define LED 23
+
+
+
+//-------------------------------------------------------------------------------------------------------------------------------------
+//4.
+//Setupinitialisierung
+void setup() { 
+//Test LED
+pinMode(LED,OUTPUT);
+
+//EEPROM EINPFLEGEN
+//Seriellen Schnittstellen
+Serial.begin (9600);                      //Beginn der Seriellen Schnittstelle / Bautrate: 9600
+myNex.begin(9600);                        //Beginn der Seriellen Schnittstelle fürs NEXTION-Display
+//-------------------------------------------------------------------------------------------------------------------------------------
+//RealTimeClock INIT
+#ifndef ESP8266
+  while (!Serial);                      //Warten auf Serielle Kommunikation und Abfrage ob Funktion gegeben
+#endif
+
+//Abfrage ob Werte ausgelesen werden
+if (! rtc.begin()) {
+  Serial.println("Störung Uhrzeit");
+  Serial.flush();
+  while (1) delay(10);
+}
+
+//Bedingung bei Spannungsausfall
+//if (rtc.lostPower()) {
+  //Serial.println("RTC lost power, let's set the time!");
+  //Datum und Uhrzeit werden bei komplieren übertragen
+  //Spannungsversorgung (Batterie) muss entfernt werden
+  //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+//}
+//Beispiel manuelles Einstellen der Uhrzeit
+// rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
+//--> 21. Januar 2014 3 Uhr in der Früh
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Umgebungstemperatur Sensor DHT11 Start
+dht1.begin();
+dht2.begin(); 
+//-------------------------------------------------------------------------------------------------------------------------------------
+//I2C - Start
+Wire.begin();
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Temperatursensor EC-Lösung Start
+sensors.begin();
+//Werte des Terminalfühlers ausgeben
+sensors.requestTemperatures();
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Temperatur und Feuchte des Kombifühlers Start
+hdc1080.begin(0x40);
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Gassensor Start
+ccs.begin();
+//Vorhaltung: Bedingung wird abgefragt ob der Sensor hochgefahren ist
+if(!ccs.begin()){
+Serial.println("Sensor konnte nicht gestartet werden. Verdrahtung prüfen !");
+while(1);
+}
+//Auf Sensor warten
+while(!ccs.available());
+
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Festlegung PINS (Arduino-MEGA)
+//Für die Navigation übers Provisorische Display
+pinMode(navigationButton, INPUT_PULLUP);
+//-------------------------------------------------------------------------------------------------------------------------------------
+//EC-Messung
+pinMode(EC_Read,INPUT);
+pinMode(ECPower,OUTPUT);
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Füllstland (Ultraschallsensor)
+pinMode(trigPin,OUTPUT); 
+pinMode(echoPin,INPUT);
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Leckageüberwachung
+pinMode(leakage, INPUT_PULLUP);
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Zuweisung NFT-System
+//Pumpen, Lüfter und Beleuchtung des Systems
+
+//Pumpen
+pinMode(pumpNFT,OUTPUT);          //Hauptpumpe  NFT
+digitalWrite(pumpNFT, HIGH);      //Relais Initalisierung --> Zustand muss festgelgt
+pinMode(pumpEC,OUTPUT);           //EC-Pumpe
+digitalWrite(pumpEC, HIGH);       //Relais Initalisierung --> Zustand muss festgelgt
+pinMode(pumpPH,OUTPUT);           //PH-Pumpe
+digitalWrite(pumpPH, HIGH);       //Relais Initalisierung --> Zustand muss festgelgt
+
+//Lüftung
+pinMode(ventilator,OUTPUT);       //Ablüfter
+digitalWrite(ventilator, HIGH);   //Relais Initialisierung --> Zustand muss festgelegt werden
+
+//Beleuchtung
+pinMode(lightNFT,OUTPUT);         //NFT-Beleuchtung (40 Watt)
+digitalWrite(lightNFT,HIGH);      //Relais Initialisierung --> Zustand muss festgelegt werden
+pinMode(lightGrowing,OUTPUT);     //Anzucht-Beleuchtung (20 Watt)
+digitalWrite(lightGrowing,HIGH);  //Relais Initialisierung --> Zustand muss festgelegt werden
+//-------------------------------------------------------------------------------------------------------------------------------------
+//EC-Messung Kalibrierung (ACHTUNG!)
+//Zu Beginn des Systems Kalbrieren
+//Muss nach der Kalibrierung auskommentiert werden (ACHTUNG!)
+//Calibrate (0,0);  
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Timer für die Dosierung
+//Konfiguration Timer 1
+  TCCR1A = 0;                         //Register A --> OC1A/OC1B
+  TCCR1B = 0;                         //INIT Register B
+  TCCR1B |= (1<<CS10)|(1 << CS12);    //PRESCALER: 1024 --> CS10 = 1 , CS12 = 1
+  TCNT1 = 0xC2F8;                     //Beginn des Zählzyklus
+                                      //65536-(16MHz/1024/1Hz - 1) = 49912 = 0xC2F8 (Ergebnis in HEX)
+  TIMSK1 |= (1 << TOIE1);             //Interruptregister
+}   //ENDE SETUP
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//5. Funktionen & Variablen 
+
+//Leckageüberwachung
+//Variablen
+bool Merker_Leakage = false;      //Hilfsmerker für Flankensteuerung
+bool Reset_Leakage = 0;           //Status des Reset-Buttons auf dem NEXTION-Display
+int Pic_Leckage = 9;              //?
+int Pic_Indicator = 7;            //?
+
+//Funktion
+void leakageDetection(){
+  if((digitalRead(leakage)) == LOW){      //wenn Leckage detektiert wurde,
+    digitalWrite(pumpNFT,HIGH);           //werden ALLE Ansteuerungen der Pumpen (NFT + Dosierung) ausgeschalten 
+    digitalWrite(pumpPH,HIGH);            //--> Vermeidung das Last zu schnell getoggelt wird!
+    digitalWrite(pumpEC,HIGH);
+    Merker_Leakage = true;                //Merker wird gesetzt wenn Leckage einmalig auslöst und bleibt solange TRUE bis es quittiert werden kann
+    Pic_Indicator = 8;                    //??
+    Pic_Leckage = 10;                     //??
+    //myNex.writeNum("Home.wav0.en", 1);    //Aktivierung der Ansteuerung Alarmaudio über das NEXTION-Display (Lautsprecher)
+    SetAlarm();
+  }
+  //Quittierung der Leckage über den RESET-Button des Displays 
+  if(Reset_Leakage == 1){                 //wenn RESET-Button gedrückt 
+    if(digitalRead(leakage) == LOW){      //Leckage noch vorhanden
+      Merker_Leakage = true;
+      Reset_Leakage = 0;
+    }
+    if(digitalRead(leakage) == HIGH){     //Leckage nicht mehr vorhanden
+      Merker_Leakage = false;
+      Reset_Leakage = 0;
+      Pic_Indicator = 7;                  //??
+      Pic_Leckage = 9;                    //??
+      //myNex.writeNum("Home.wav0.en", 0);  //Deaktivierung der Ansteuerung Alarmaudio über das NEXTION-Display (Lautsprecher)
+      QuitAlarm();
+    }
+  }
+}
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Füllstandsmessung
+//Variablen
+int trigStateUltraSens = LOW;               //Status des Triggers
+int intervalUltraSens = 2;                  //Intervall in millisekunden --> Einschalten des Triggers
+int interval2UltraSens = 1000;              //Ausgabe auf serieller Schnittstelle in Millisekunden
+int printStateUltraSens = LOW;              //Ausgabe als PRINT-Befehl oder anderen seriellen Schnittstelle (JA/NEIN)
+unsigned long previousMillisUltraSens = 0;  //vorheriger Wert mit dem der nächste Wert verknüpfen
+
+//Maße des zu messenden Behälters
+float hoehe = 0.32;                         //Höhe des Tanks    (Einheit: meter)
+float tiefe = 0.367;                        //Tiefe des Tanks   (Einheit: meter)
+float breite= 0.565;                        //Breite des Tanks  (Einheit: meter)
+float offsetTanklevel = 2;                  //Offset für genauere Kalbrierung (Einheit: liter)
+float volume_tank_ges = ((hoehe*breite*tiefe)*1000) - offsetTanklevel;        //Volumen des gesamten Tankes
+float volume_tank_cal = 0;                  //Berechnung des momentanigen Wasservolumens
+//Funktion (Marcel)
+void ultrasonic_measurement(){
+  digitalWrite(trigPin,trigStateUltraSens);
+	int duration, distance; //variables
+	duration = pulseIn(echoPin,HIGH);
+	distance = (duration/2) / 29.1;
+  
+	if (printStateUltraSens = HIGH){
+  volume_tank_cal =volume_tank_ges - ((distance*breite*100 *tiefe*100) / 1000);
+  }
+}
+//------------------------------------------------------------------------------------------------------------------
+//Realtime-Clock
+
+//Uhrzeiten für Beleuchtung NFT
+int Start_lightNFT_hour = 7;        //Einschaltzeit NFT-Beleuchtung(Stunden)
+int Start_lightNFT_minute = 0;      //Einschaltzeit NFT-Beleuchtung(Minuten)
+int Stopp_lightNFT_hour = 19;       //Ausschaltzeit NFT-Beleuchtung(Stunden)
+int Stopp_lightNFT_minute = 0;      //Ausschaltzeit NFT-Beleuchtung(Minuten)
+
+//Ansteuerung Beleuchtung NFT
+void lightNFT_with_RTC(DateTime now2){
+  //Beleuchtung NFT
+    if (now2.hour() >= 0 && now2.hour() < Start_lightNFT_hour){                             //Von 0Uhr bis 14Uhr
+      digitalWrite(lightNFT, HIGH); //Aus
+    }
+    else if (now2.hour() == Start_lightNFT_hour && now2.minute() < Start_lightNFT_minute){  //Von 14Uhr bis 14:29Uhr
+      digitalWrite(lightNFT, HIGH); //Aus
+    }
+    else if (Start_lightNFT_hour != Stopp_lightNFT_hour && now2.hour() == Start_lightNFT_hour && now2.minute() >= Start_lightNFT_minute){ //Von 14:30 bis 15Uhr
+      digitalWrite(lightNFT, LOW);  //Ein
+    }
+    else if (now2.hour() > Start_lightNFT_hour && now2.hour() < Stopp_lightNFT_hour){       //Von 15Uhr bis 19Uhr
+      digitalWrite(lightNFT, LOW);  //Ein
+    }
+    else if (now2.hour() == Stopp_lightNFT_hour && now2.minute() < Stopp_lightNFT_minute){  //Von 20Uhr bis 20:49Uhr
+      digitalWrite(lightNFT, LOW);  //Ein
+    }
+    else if (now2.hour() == Stopp_lightNFT_hour && now2.minute() >= Stopp_lightNFT_minute){ //Von 20:50Uhr bis 21Uhr
+      digitalWrite(lightNFT, HIGH); //Aus
+    }   
+    else if (now2.hour() > Stopp_lightNFT_hour && now2.hour() <= 23){                       //Von 21Uhr bis 23:59Uhr
+      digitalWrite(lightNFT, HIGH); //Aus
+    }
+    //Innerhalb einer Stunde, also nur für paar Minuten
+    if (Start_lightNFT_hour == Stopp_lightNFT_hour){
+      if (now2.minute() >= Start_lightNFT_minute && now2.minute() < Stopp_lightNFT_minute){
+        digitalWrite(lightNFT, LOW);  //Ein
+      }
+      else {
+        digitalWrite(lightNFT, HIGH);  //Aus
+      }
+    }
+
+}
+//------------------------------------------------------------------------------------------------------------------
+//Uhrzeiten für Beleuchtung Anzucht
+int Start_lightGrowing_hour = 7;            //Einschaltzeit NFT-Beleuchtung(Stunden)
+int Start_lightGrowing_minute = 0;          //Einschaltzeit NFT-Beleuchtung(Minuten)
+int Stopp_lightGrowing_hour = 19;           //Ausschaltzeit NFT-Beleuchtung(Stunden)
+int Stopp_lightGrowing_minute = 0;          //Ausschaltzeit NFT-Beleuchtung(Minuten)
+
+//Ansteuerung Beleuchtung Anzucht
+void lightGrowing_with_RTC(DateTime now3){
+      //Beleuchtung Anzucht
+    if (now3.hour() >= 0 && now3.hour() < Start_lightGrowing_hour){                                     //Von 0Uhr bis 14Uhr
+      digitalWrite(lightGrowing, HIGH); //Aus
+    }
+    else if (now3.hour() == Start_lightGrowing_hour && now3.minute() < Start_lightGrowing_minute){      //Von 14Uhr bis 14:29Uhr
+      digitalWrite(lightGrowing, HIGH); //Aus
+    }
+    else if (Start_lightGrowing_hour != Stopp_lightGrowing_hour && now3.hour() == Start_lightGrowing_hour && now3.minute() >= Start_lightGrowing_minute){ //Von 14:30 bis 15Uhr
+      digitalWrite(lightGrowing, LOW);  //Ein
+    }
+    else if (now3.hour() > Start_lightGrowing_hour && now3.hour() < Stopp_lightGrowing_hour){           //Von 15Uhr bis 19Uhr
+      digitalWrite(lightGrowing, LOW);  //Ein
+    }
+    else if (now3.hour() == Stopp_lightGrowing_hour && now3.minute() < Stopp_lightGrowing_minute){      //Von 20Uhr bis 20:49Uhr
+      digitalWrite(lightGrowing, LOW);  //Ein
+    }
+    else if (now3.hour() == Stopp_lightGrowing_hour && now3.minute() >= Stopp_lightGrowing_minute){     //Von 20:50Uhr bis 21Uhr
+      digitalWrite(lightGrowing, HIGH); //Aus
+    }   
+    else if (now3.hour() > Stopp_lightGrowing_hour && now3.hour() <= 23){                               //Von 21Uhr bis 23:59Uhr
+      digitalWrite(lightGrowing, HIGH); //Aus
+    }
+    //Innerhalb einer Stunde (wenige Minuten)
+    if (Start_lightGrowing_hour == Stopp_lightGrowing_hour){
+      if (now3.minute() >= Start_lightGrowing_minute && now3.minute() < Stopp_lightGrowing_minute){
+        digitalWrite(lightGrowing, LOW);  //Ein
+      }
+      else {
+        digitalWrite(lightGrowing, HIGH); //Aus
+      }
+    }
+}
+//------------------------------------------------------------------------------------------------------------------
+//Vorhaltung für das Display --> falls Pflanzen keine dauerhafte Wasserversorgung benötigen
+/*Variablen - Uhrzeiten für Pumpe NFT
+int Start_pumpNFT_hour = 0;
+int Start_pumpNFT_minute = 0;
+int Stopp_pumpNFT_hour = 23;
+int Stopp_pumpNFT_minute = 59;
+
+//Ansteuerung Pumpe NFT
+void pumpNFT_with_RTC(DateTime now1){
+  //Hauptpumpe
+    if (now1.hour() >= 0 && now1.hour() < Start_pumpNFT_hour){//Von 0Uhr bis 14Uhr
+      digitalWrite(pumpNFT, HIGH);//Aus
+    }
+    else if (now1.hour() == Start_pumpNFT_hour && now1.minute() < Start_pumpNFT_minute){//Von 14Uhr bis 14:29Uhr
+      digitalWrite(pumpNFT, HIGH);//Aus
+    }
+    else if (Start_pumpNFT_hour != Stopp_pumpNFT_hour && now1.hour() == Start_pumpNFT_hour && now1.minute() >= Start_pumpNFT_minute){//Von 14:30 bis 15Uhr
+      //EIN
+      NFTPumpOn();
+    }
+    else if (now1.hour() > Start_pumpNFT_hour && now1.hour() < Stopp_pumpNFT_hour){//Von 15Uhr bis 19Uhr
+      //EIN
+      NFTPumpOn();
+    }
+    else if (now1.hour() == Stopp_pumpNFT_hour && now1.minute() < Stopp_pumpNFT_minute){//Von 20Uhr bis 20:49Uhr
+      //EIN
+      NFTPumpOn();
+    }
+    else if (now1.hour() == Stopp_pumpNFT_hour && now1.minute() >= Stopp_pumpNFT_minute){//Von 20:50Uhr bis 21Uhr
+      digitalWrite(pumpNFT, HIGH);//Aus
+    }   
+    else if (now1.hour() > Stopp_pumpNFT_hour && now1.hour() <= 23){//Von 21Uhr bis 23:59Uhr
+      digitalWrite(pumpNFT, HIGH);//Aus
+    }
+    //Innerhalb einer Stunde, also nur für paar Minuten
+    if (Start_pumpNFT_hour == Stopp_pumpNFT_hour){
+      if (now1.minute() >= Start_pumpNFT_minute && now1.minute() < Stopp_pumpNFT_minute){
+        //Ein
+        NFTPumpOn();
+      }
+      else {
+        digitalWrite(pumpNFT, HIGH);//Aus
+      }
+    }
+
+}
+*/
+//------------------------------------------------------------------------------------------------------------------
+//Kalibrierung EC-Sonde
+//!!!ACHTUNG!!!!!
+//AUFRUF NUR WÄHREND DER KALIBRIERUNG!!!
+//Kalibrierung des EC Wertes (Berechnung über Widerstandsmessung 1k Ohm)
+void Calibrate (float Temperature_end, float Temperature_begin) // bis jetzt: float Temperature_end, float Temperature_begin, float temp_C
+{
+//Kalbrierungshinweise 
+Serial.println("Kalibrierung hat begonnen!");
+Serial.println("Hinweis: Wurde der TDS-Wert des Messgeraetes angepasst?");
+Serial.println("Bitte warten. Den Stecker und Temperaturfuehler dauerhaft bedeckt halten mit der Kalibrierfluessigkeit!");
+//Einsatz des Terminalfühlers
+Temp_C = (sensors.getTempCByIndex(0) + offsetTempEC); //Temperaturberechnung 
+Temp1_Value = Temp_C;
+Temperature_begin=Temp_C;
+//Kontrolle der Temperatur
+Serial.print("Vergleichswert Temperatur 1 (in Grad Celcius): ");
+Serial.println(Temp_C);
+//Vergleich der Elektrodenspannung (Spannungsteiler)
+Value = 0;
+int i = 1;
+while(i<=10){
+digitalWrite(ECPower,HIGH);
+A_to_D = analogRead(EC_Read);
+A_to_D = analogRead(EC_Read);
+digitalWrite(ECPower,LOW);
+Value = Value + A_to_D;
+i++;
+delay(6000);
+};
+A_to_D=(Value/10);
+Temp_C = (sensors.getTempCByIndex(0) + offsetTempEC); //Temperaturberechnung 
+Temp1_Value = Temp_C;
+Temperature_end=Temp_C;
+//Kontrolle der Temperatur
+Serial.print("Vergleichswerte Temperatur 2 (in Grad Celcius): ");
+Serial.println(Temp_C);
+//Berechnung des Ausgleichsfaktors
+EC =CalibrationEC*(1+(Temp_Coef*(Temperature_end-25.0)));
+Vdrop= (((Vin)*(A_to_D))/1024.0);
+//Widerstand vom Wasser
+R_Water=(Vdrop*R1)/(Vin-Vdrop);       
+//K-Faktor                      
+float K_cal= 1000/(R_Water*EC);                            
+//Ausgabe des Ausgleichsfaktors
+Serial.print("Ersetze den Ausgleichsfaktor in der Konfigline / K = ");
+Serial.println(K_cal);
+Serial.print("Temperaturdifferenz zwischen 2 Messungen = ");
+//Differenz Berechnung beider gemessener Temperaturen mit einem Versatz von 6 Sekunden
+float Temp_Diff=Temperature_end-Temperature_begin;
+//Ausgabe der Temperaturdifferenz beider Messungen
+Serial.print(Temp_Diff);
+Serial.println(" (in Grad Celcius)");
+Serial.println("Temperaturdifferenz darf maximal 0.15 abweichen. Wegen der Genauigkeit der Messung");
+Serial.println("");
+Calibrate ((float )Temperature_end, (float) Temperature_begin);
+}
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Ermittlung des EC_Wertes über Widerstandsmessung
+//Variablen
+//Hinweis Variablen stehen über dem Setup da die Kalbirierungsfunktion mit denselben Variablen arbeitet
+//Mittelwertbildung EC und TDS
+
+//Mittelwertbildung
+const int arraySizeEC = 15;
+float measuringEC[arraySizeEC] = {0};
+//Variablen
+float measureEC = 0;  // Annahme: Messung an Pin A0
+float averageEC = 0;
+float sumEC = 0;
+//Funktionen
+
+//Mittelwertbildung von CO2
+void average_calculation_EC(){
+  measureEC = EC_at_25;
+  for (int i = 0; i < arraySizeEC - 1; i++) {
+    measuringEC[i] = measuringEC[i+1];
+  }
+  measuringEC[arraySizeEC - 1] = measureEC;
+  // Berechnen Sie den Mittelwert aus allen Messungen
+  sumEC= 0;
+  for (int i = 0; i < arraySizeEC; i++) {
+    sumEC += measuringEC[i];
+  }
+  averageEC = sumEC / arraySizeEC;
+  return averageEC;
+}
+
+
+//Wassertemperatur auslesen
+//Variablen
+float Temp_C_Display = 0;
+//Funktion
+void watertemp(){
+  Temp_C_Display = sensors.getTempCByIndex(0) + offsetTempEC; //offset: Temperaturausgleich
+}
+
+//Funktion
+void GetEC()
+{
+Temp_C = sensors.getTempCByIndex(0) + offsetTempEC; //offset: Temperaturausgleich
+Temperature = Temp_C;                               //Übergabe Temperatur für EC
+digitalWrite(ECPower,HIGH);                         //5v in das Wasser leiten
+A_to_D= analogRead(EC_Read);                        //Spannungsteiler auslesen
+A_to_D= analogRead(EC_Read);                        //Spannungsteiler auslesen
+digitalWrite(ECPower,LOW);                          //5V auf 0V setzen
+Vdrop= (Vin*A_to_D) / 1024.0;                       //Berechnung der Spannungsdifferenz (Vergleich)
+R_Water = (Vdrop*R1) / (Vin-Vdrop);                 //Berechnung Wasswiderstand
+EC = 1000/ (R_Water*K);                             //Berechnung des EC-Wertes in mS (Leitfähigkeit des Wassers)
+EC_at_25 = (EC / (1+ Temp_Coef*(Temperature-25.0))) - offsetEC; //Referenz bei 25 Grad gewählt
+ppm=(averageEC)*(PPM_Con*1000);                      //ausgerechneter TDS-Wert
+return Temp_C;
+}
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//PH-Messung
+//Marcel
+//Variablen
+int pHArray[ArrayLenthPH];                //Array zur Mittelwertbildung des PH-Wertes
+int pHArrayIndex=0;
+static float pHValue,voltage;             //Variablen für die PH-Berechnung und Angabe
+//Funktion
+void GetPH(){
+      pHArray[pHArrayIndex++]=analogRead(SensorPin);
+      if(pHArrayIndex==ArrayLenthPH)pHArrayIndex=0;
+      voltage = avergearrayPH(pHArray, ArrayLenthPH)*5.0/1024;
+      pHValue = 3.5*voltage+offsetPH;
+      double avergearrayPH();
+}
+
+double avergearrayPH(int* arr, int number){
+  int i;
+  int max,min;
+  double avgPH;
+  long amount=0;
+  if(number<=0){
+    Serial.println("Fehler bei Bildung des Mittelwertes!/n");
+    return 0;
+  }
+  if(number<5){   //less than 5, calculated directly statistics
+    for(i=0;i<number;i++){
+      amount+=arr[i];
+    }
+    avgPH = amount/number;
+    return avgPH;
+  }else{
+    if(arr[0]<arr[1]){
+      min = arr[0];max=arr[1];
+    }
+    else{
+      min=arr[1];max=arr[0];
+    }
+    for(i=2;i<number;i++){
+      if(arr[i]<min){
+        amount+=min;        //arr<min
+        min=arr[i];
+      }else {
+        if(arr[i]>max){
+          amount+=max;    //arr>max
+          max=arr[i];
+        }else{
+          amount+=arr[i]; //min<=arr<=max
+        }
+      }//if
+    }//for
+    avgPH = (double)amount/(number-2);
+  }//if
+  return avgPH;
+}
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Umgebungssensoren
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Technikebene Temperatur und Feuchte über OneWire-Bus (-12B1)
+//Variablen
+float tempRoom1;
+float humidityRoom1;
+//Funktion
+void Temp_Hum_Tech(){
+tempRoom1= dht1.readTemperature();        //Auslesen der Temperatur
+humidityRoom1 = dht1.readHumidity();      //Auslesen der Feuchte
+}
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//NFT-Ebene
+//Temperatur-, Feuchte- und Luftqualitätsmessung (I2C) 
+//Variablen
+//Wert für Berechnung und Übergabe
+int CO2_read = 0;     //ausgelesener CO2 Wert
+int CO2 = 0;          //Übergabe CO2 und Regelung
+float TVOC;           //Reserve --> Schadstoffteilcen
+float tempRoom2;      //Temperatur -16B1 (I2C)
+float humidityRoom2;  //Feuchte -16B1 (I2C)
+
+//Mittelwertbildung
+const int arraySizeCO2 = 20;
+float measuringCO2[arraySizeCO2] = {0};
+//Variablen
+float measureCO2 = 0;  // Annahme: Messung an Pin A0
+float averageCO2 = 0;
+float sumCO2 = 0;
+
+//Funktionen
+
+//Mittelwertbildung von CO2
+void average_calculation_CO2(){
+  for (int i = 0; i < arraySizeCO2 - 1; i++) {
+    measuringCO2[i] = measuringCO2[i+1];
+  }
+  measuringCO2[arraySizeCO2 - 1] = measureCO2;
+  // Berechnen Sie den Mittelwert aus allen Messungen
+  sumCO2= 0;
+  for (int i = 0; i < arraySizeCO2; i++) {
+    sumCO2 += measuringCO2[i];
+  }
+  averageCO2 = sumCO2 / arraySizeCO2;
+  return averageCO2;
+}
+//Werte Auslesen und Mittelwert bilden für Übergabe
+void airQuality(){
+ccs.available();
+ccs.readData();
+TVOC =ccs.getTVOC();
+tempRoom2 = hdc1080.readTemperature();
+humidityRoom2 =hdc1080.readHumidity();
+CO2_read  = ccs.geteCO2();
+measureCO2 = CO2_read;
+average_calculation_CO2();
+CO2 = averageCO2;
+}
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Temperatur und Feuchte über OneWire-Bus (-17B1)
+//Variablen
+float tempRoom3;
+float humidityRoom3;
+//Funktion
+void Temp_Hum_NFT(){
+tempRoom3= dht2.readTemperature();            //Auslesen der Temperatur
+humidityRoom3 = dht2.readHumidity();          //Auslesen der Feuchte
+}
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Interne Uhr für Dosierung des PH- und EC-WErtes und Intervallsteuerung der NFT-Pumpe
+//Variablen der Zeitsteuerung
+volatile int zaehler_sek =0;
+volatile int zaehler_min = 0 ; 
+
+//Vorhaltung für provisorische ZEIT
+volatile int zaehler_hour = 4;
+volatile int zaehler_day = 5;
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Alarmmeldungen
+//Marcel
+bool errorDHT=false;
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Meldungen anpassen um bei Fehler zu sperren !! 
+
+/* //Auskommentiert weil zu wenige digtiale GPIOS
+//Alarm Meldungen
+boolean alarm_status = false;  
+void alarm(){
+if ( ppm < 1 || Temp_C < 10 || EC_at_25 < 0.05 || pHValue > 10 || pHValue <= 4 ){  //Zusätlich: 1.) CO2 == 0 || TVOC == 0 ||tempRoom2 > 50.00 || humidityRoom2>99.00 (für den I2C-Fühler) //2.) || errorDHT == true (DHT-Sensor)
+  alarm_status = true;
+}
+else{
+  alarm_status = false;
+}
+
+if (alarm_status == true){
+  digitalWrite(alarm_LED,HIGH);
+}
+else{
+  digitalWrite(alarm_LED,LOW);
+}
+}
+
+//Wartungsmeldungen
+boolean maintenance_status = false;
+void maintenance(){
+  if (pHValue <= 5){  //eingestellte Grenzwert 
+  maintenance_status = true;
+}
+else{
+  maintenance_status = false;
+}
+
+if (maintenance_status == true){
+  digitalWrite(maintenance_LED,HIGH);
+}
+else{
+  digitalWrite(maintenance_LED,LOW);
+}
+}
+
+//RUN-Meldung
+boolean run_status = false;
+void run(){
+  if (alarm_status == false){
+  run_status = true;
+}
+else{
+  run_status = false;
+}
+
+if (run_status == true){
+  digitalWrite(run_LED,HIGH);
+}
+else{
+  digitalWrite(run_LED,LOW);
+}
+}
+*/ //Auskommentiert weil zu wenige digtiale GPIOS
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Intervallsteuerung der NFT-Hauptpumpe
+//Verhältnis von Ein- und Ausschaltzeit beträgt 2:1
+//Hauptpumpe NFT
+int minTimeNFT=2;                         //einstellbare Mindestzeit (Einschalten)
+int adjustableTimeNFT = iPumpOn;          //Einstellbare Zeit über Display
+int NFTEinschaltzeit = 2;                 //Einschaltzeit der einzelnen Fälle in der CASE-Struktur
+//Flankeauswertung wenn jeweilige Zeit über Modulo verglichen
+int countNFT = 1;                         //Anfang der CASE-Struktur
+int stateNFT = LOW;                       //Status der NFT-Pumpe
+int laststateNFT = LOW;                   //gespeicherter Wert
+//Funktion
+void pumpTimeControlNFT(){
+  for (int i=1; i<61;i++){
+    if (iPumpOn <= minTimeNFT){                         //wenn eingestellt Zeit kleiner als Mindestzeit 
+      NFTEinschaltzeit = minTimeNFT/2;                  //übernehme Mindestzeit
+    } 
+    else if (iPumpOn==i){//(adjustableTimeNFT==i){      //wenn eingestellte Zeit zwischen Mindestzeit und 60 Minuten
+      NFTEinschaltzeit = (iPumpOn)/2;                   //übernehme Display Sollwert durch 2  
+    }                                                   //Verhältnis 2:1 (EIN/AUS)
+  }
+}
+
+void NFTPumpOn(){
+  pumpTimeControlNFT();                         //Auswertung der Einschaltzeit
+  if (zaehler_min % (NFTEinschaltzeit) == 0){   //wenn eingestellt Einschaltzeit erreicht --> NFT-Pumpe EIN
+    stateNFT = HIGH;
+  }
+  else{                                         //sonst Pumpe AUS
+    stateNFT=LOW;
+  }
+  //Flankenwechsel erkennen
+  if(laststateNFT == LOW && stateNFT == HIGH) {
+    //Abhängig vom Counter wird passender Fall aufgerufen
+    switch(countNFT) {
+      case 1: digitalWrite(pumpNFT,LOW);  //Pumpe EIN
+              pumpNFTstatus=true;
+              break;
+      case 2: digitalWrite(pumpNFT,LOW);  //Pumpe EIN
+              pumpNFTstatus=true;
+              break;
+      case 3: digitalWrite(pumpNFT,HIGH); //Pumpe AUS
+              pumpNFTstatus=false;        
+              break;            
+      }   
+    countNFT++;                           //Counter um 1 erhöhen
+    if(countNFT == 4) {                   //wenn Counter 4 --> zurücksetzen auf 1
+      countNFT = 1;         
+    }
+  }
+laststateNFT = stateNFT;                  //Speicherung des letzten Zustands
+return NFTEinschaltzeit;
+}
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//Dosierung PH
+//Wartezeit der Dosierung
+int waitMinDosagePH=10;                            //Wartezeit                //Für Display eventuell --> Eingabe der Wartzeit in Minuten
+int proportionFixPH = waitMinDosagePH * 30;       //Wartezeit wird mit Faktor 30 Multipliziert --> hier Ergebnis: 150
+                                                  //Umrechnung von einer Minute über Modulofunktion --> 60 sek entspricht 30 Impulsen
+                                                  //Für die Anzeige auf dem Display --> Berechnung der Proportionalen Zeitsteuerung --> Wartezeit= proportionFix * adjustableTimePH / z.B. 5 Minuten entspricht proportion
+                                                  //proportionFixPH = Wartezeit / AdjustableTimePH --> = (60s) / 2 = 30 (ERGEBNIS) --> pro Minute einen Faktor um 30 erhöhen
+int proportionPH = proportionFixPH;// +1;            //Verhältnis der Dosierung zu Warte zeit 1 / Proportion --> BSP.: 1 / 60 --> umso länger ich Dosiere umso länger wartet man !!!!
+
+//Länge der Dosierung
+int minTimePH=2;                                //Mindestzeit in Minuten (10 Minuten EIN / 5 Minuten AUS)
+int adjustableTimePH = 2;                       //Darf nicht gleich 1 sein !!! 
+int PHEinschaltzeit=0;                          //adjustableTimeNFT+minTime;
+//Flankeauswertung wenn jeweilige Zeit über Modulo verglichen
+int countPH = 1;
+int statePH = LOW;
+int laststatePH = LOW;
+
+//Das Verhältnis der Einschaltzeit ist 2:1 (Einschaltzeit/Ausschaltzeit)
+void dosingpumpTimePH(){
+  for (int i=1; i<61;i++){
+  if (adjustableTimePH < minTimePH){
+    PHEinschaltzeit = minTimePH;
+  } 
+  else if (adjustableTimePH==i){
+    PHEinschaltzeit = adjustableTimePH; //Verschachtelung mit Mindestszeit Anpassung für Werte 
+    }
+  
+  }
+}
+
+
+//Hilfsmerker Eindosierung
+int dosierungsanzahl;
+
+void PHPumpOn(){ 
+dosingpumpTimePH();
+if (zaehler_sek % (PHEinschaltzeit) == 0){
+  statePH = HIGH;
+}
+else{
+  statePH=LOW;
+}
+ //Flankenwechsel erkennen
+ if(laststatePH == LOW && statePH == HIGH) {
+    //abhängig vom counter passende funktion aufrufen
+    switch(countPH) {
+     case 1:    digitalWrite(pumpPH,LOW);
+                //Funktionstest
+                //Serial.print("Anzahl Dosierung PH: ");
+                //Serial.println(dosierungsanzahl++);
+                //Serial.println("PH-Wert: ");
+                //Serial.println(pHValue);
+                break; 
+    default:    digitalWrite(pumpPH,HIGH);
+                break;
+
+    }   
+    //zähler erhöhen
+    countPH++;
+    //zähler zurücksetzen
+    if(countPH == proportionPH) {
+    countPH = 1;
+    }
+ }
+  laststatePH = statePH;   //letzten zustand merken 
+}
+
+//Sperre der Dosierung (erst PH dann EC-Wert korrigieren)
+//Merker um die EC-Dosierung zu blockieren bis der PH-Wert erreicht ist
+bool PHDosageOn = false;
+
+//Dosierung EC
+int waitMinDosageEC=15;                          //Wartezeit in Minuten zum Nachdosieren (Einstellbar über Display)
+int proportionFixEC=waitMinDosageEC * 30;       //Für die Anzeige auf dem Display --> Berechnung der Proportionalen Zeitsteuerung --> Wartezeit= proportionFix * adjustableTimePH
+int proportionEC = proportionFixEC +1;          //Verhältnis der Dosierung zu Warte zeit 1 / Proportion --> BSP.: 1 / 60 --> umso länger ich Dosiere umso länger wartet man !!!!
+int minTimeEC=2;                                //Mindestzeit in Minuten (10 Minuten EIN / 5 Minuten AUS)
+int adjustableTimeEC = 2;                       //der Wert den wir bekommen mit der Mindestlaufzeit verschachteln
+int ECEinschaltzeit=0;                          //adjustableTimeNFT+minTime;
+//Flankeauswertung wenn jeweilige Zeit über Modulo verglichen
+int countEC = 1;
+int stateEC = LOW;
+int laststateEC = LOW;
+
+//Das Verhältnis der Einschaltzeit ist 2:1 (Einschaltzeit/Ausschaltzeit)
+void dosingpumpTimeEC(){
+  for (int i=1; i<61;i++){
+  if (adjustableTimeEC < minTimeEC){
+    ECEinschaltzeit = minTimeEC;
+  } 
+  else if (adjustableTimeEC==i){
+    ECEinschaltzeit = adjustableTimeEC; //Verschachtelung mit Mindestszeit Anpassung für Werte 
+    }
+  
+  }
+}
+
+void ECPumpOn(){
+dosingpumpTimeEC();
+if (zaehler_sek % (ECEinschaltzeit) == 0 && averageEC> 0.1){   // 0.1 --> ist der Grenzwert von dem Wasser was eingfüllt wird / es dauert gewisse Zeit bis die erste Messung zustande kommt
+  stateEC = HIGH;
+}
+else{
+  stateEC=LOW;
+}
+ //Flankenwechsel erkennen
+ if(laststateEC == LOW && stateEC == HIGH) {
+    //abhängig vom counter passende funktion aufrufen
+    switch(countEC) {
+     case 1:    digitalWrite(pumpEC,LOW);
+                break; 
+    default:    digitalWrite(pumpEC,HIGH);
+                break; 
+    //case proportionFixEC:    digitalWrite(pumpEC,HIGH);
+     //           break;
+
+    }   
+    //zähler erhöhen
+    countEC++;
+    //Serial.println(countEC);
+    //zähler zurücksetzen
+    if(countEC == proportionEC) {
+    countEC = 1;
+    }
+ }
+  laststateEC = stateEC;   //letzten zustand merken 
+}
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Belüftung
+//Variablen der Funktion
+float Average_Temp_System;
+float Average_Moist_System;
+
+//Hystereswerte für Lüftungansteuerung
+float Hysteresis_Temp_System = 1.5;
+float Hysteresis_Moist_System = 7.5;
+float Hysteresis_CO2_System = 200.0;
+
+//Interne Verknüpfung von Sollwerte zum setzen (Reserve für Diplayausfall)
+//float Setpoint_Temp_System = 19.5;
+//float Setpoint_Moist_System = 65.5;
+//Bedingung (Beispiel)
+//if(  (Average_Temp_System >= (Setpoint_Temp_System + Hysteresis_Temp_System))   ||    (Average_Moist_System >= (Setpoint_Moist_System + Hysteresis_Moist_System))    ){
+  
+//Verwendete Variablen des Displays
+float flSollPlantMois = 65; //Grenzwert Feuchte Pflanzen
+float flSollPlantTemp = 21; //Grenzwert Temperatur Pflanzen
+float flSollCO2 = 1000; //Grenzwert CO2
+
+//Funktion Ablüfter
+void Lueftung(){
+  //wenn eingestellte Sollwert von Temperatur, Feuchte, CO2 mit jeweilig angegebener Hysterese überschritten werden --> Ablüfter EIN
+  if(  (Average_Temp_System >= (flSollPlantTemp + Hysteresis_Temp_System))   ||    (Average_Moist_System >= (flSollPlantMois + Hysteresis_Moist_System))  ||    (CO2 >= (flSollCO2 + Hysteresis_CO2_System))    ){
+    digitalWrite(ventilator, LOW);  //Ablüfter EIN
+  }
+  //wenn eingestellte Sollwert von Temperatur, Feuchte, CO2 mit jeweilig angegebener Hysterese unterschritten werden --> Ablüfter EIN
+  else if(  (Average_Temp_System < (flSollPlantTemp - Hysteresis_Temp_System))  &&   (Average_Moist_System < (flSollPlantMois - Hysteresis_Moist_System))   &&    (CO2 < (flSollCO2 - Hysteresis_CO2_System))  ){
+    digitalWrite(ventilator, HIGH); //Ablüfter AUS
+  }
+}
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//NEXTION- Display
+//-------------------------------------------------------------------------------------------------------------------------------------
+//Variablen
+
+//Uhrzeit
+String Uhrzeit = "";
+
+//Integer
+//Freigaben
+int ANLAGE = 0;
+int DOSIERUNG = 0;
+
+//Standby-Zeit + Uhrzeit
+int iStandby = 0;     //Standby Zeit (s)
+int iTimeH = 0;       //aktuelle Uhrzeit Stunden 0-23
+int iTimeM = 0;       //aktuelle Uhrzeit Minuten 0-59
+
+//Zeitsteuerung NFT und Anzucht Beleuchtung
+int iLight40FH = Start_lightNFT_hour;       //NFT Licht Einschaltdauer von (Stunden)
+int iLight40FM = Start_lightNFT_minute;     //NFT Licht Einschaltdauer von (Minuten)
+int iLight40TH = Stopp_lightNFT_hour;       //NFT Licht Einschaltdauer bis (Stunden)
+int iLight40TM = Stopp_lightNFT_minute;     //NFT Licht Einschaltdauer bis (Minuten)
+int iLight20FH = Start_lightGrowing_hour;   //Anzucht Licht Einschaltdauer von (Stunden)
+int iLight20FM = Start_lightGrowing_minute; //Anzucht Licht Einschaltdauer von (Minuten)
+int iLight20TH = Stopp_lightGrowing_hour;   //Anzucht Licht Einschaltdauer bis (Stunden)
+int iLight20TM = Stopp_lightGrowing_minute; //Anzucht Licht Einschaltdauer bis (Minuten)
+
+//Floats
+//Grenzwerte (Verwendung im loop)
+float flSollPH = 6.5;   //Grenzwert PH
+float flSollEC = 0.8;   //Grenzwert EC
+
+//Texte
+//Sollwert Temperatur, Feuchte und CO2 im NFT-Bereich
+String stSollPlantTemp = String(flSollPlantTemp); //Grenzwert Temperatur Pflanzen
+String stSollPlantMois = String(flSollPlantMois); //Grenzwert Feuchte Pflanzen
+String stSollCO2 = String(flSollCO2);             //Grenzwert CO2
+//Sollwert Dosierung
+String stSollPH = String(flSollPH); //Grenzwert PH
+String stSollEC = String(flSollEC); //Grenzwert EC
+
+//Übergabe Messwerte
+//Mittelwert NFT-Bereich
+String stIstPlantTemp = String(Average_Temp_System);  //Istwert Temperatur Pflanzen
+String stIstPlantMois = String(Average_Moist_System); //Istwert Feuchte Pflanzen
+String stIstCO2 = String(CO2);                        //Istwert CO2
+//Dosierung
+String stIstPH = String(pHValue);     //Istwert PH
+String stIstEC = String(averageEC);    //Istwert EC
+String stTDS = "";                    //TDS
+String stWatertemp = String(Temp_C_Display);  //Wassertemperatur
+//Technik
+String stBotTemp = String(tempRoom1);         //Temperatur Technik
+String stBotMois = String(humidityRoom1);     //Feuchte Technik
+//Volumen
+String stTanklevel =String(volume_tank_cal);  //Höhenstand Tank
+//Intervallsteuerung NFT-Pumpe
+String stPumpOff = String (NFTEinschaltzeit); //Einschaltzeit NFT-Pumpe
+
+//Übergabe der Werte zur Visualisierung
+void string_display(){
+//stSollPlantTemp = String(flSollPlantTemp); //Grenzwert Temperatur Pflanzen
+//stSollPlantMois = String(flSollPlantMois); //Grenzwert Feuchte Pflanzen
+//stSollCO2 = String(flSollCO2); //Grenzwert CO2
+//stSollPH = String(flSollPH); //Grenzwert PH
+//stSollEC = String(flSollEC); //Grenzwert EC
+//Messwerte
+stIstPlantTemp = String(Average_Temp_System);   //Istwert Temperatur Pflanzen
+stIstPlantMois = String(Average_Moist_System);  //Istwert Feuchte Pflanzen
+stIstCO2 = String(CO2);                         //Istwert CO2
+stIstPH = String(pHValue);                      //Istwert PH
+stIstEC = String(averageEC);                     //Istwert EC
+stBotTemp = String(tempRoom1);                  //Temperatur Technik
+stBotMois = String(humidityRoom1);              //Feuchte Technik
+stTDS = String(ppm);                            //TDS
+stWatertemp = String(Temp_C_Display);                   //Wassertemperatur
+stTanklevel = String(volume_tank_cal);          //Höhenstand Tank
+stPumpOff = String (NFTEinschaltzeit);          //Einschaltzeit NFT-Pumpe
+}
+
+//Funktionen für Displayaktionen
+
+void trigger0(){  //Uhrzeit speichern
+  iTimeH = myNex.readNumber("Settings.iSetTimeH.val");
+  iTimeM = myNex.readNumber("Settings.iSetTimeM.val");
+  //Auskommentiert Versuch Fehlerbehebung 
+  //rtc.adjust(DateTime(0, 0, 0, iTimeH, iTimeM, 0));
+  //Uhrzeit = String(iTimeH) + ":" + String(iTimeM);
+}
+
+void trigger1(){  //Hand Anlage Ein/Aus
+  if (myNex.readNumber("Manual.swAnlage.val") == 1){
+    ANLAGE = 1;
+  }
+  else ANLAGE = 0;
+}
+
+void trigger2(){  //Hand Anzucht-Beleuchtung
+  if (myNex.readNumber("Manual.swLight20.val") == 1){
+    digitalWrite(lightGrowing, LOW);
+  }
+  else digitalWrite(lightGrowing, HIGH);
+}
+
+void trigger3(){  //Hand NFT-Beleuchtung
+  if (myNex.readNumber("Manual.swLight40.val") == 1){
+    digitalWrite(lightNFT, LOW);
+  }
+  else digitalWrite(lightNFT, HIGH);
+}
+
+void trigger4(){  //Hand Belüftung
+  if (myNex.readNumber("Manual.swVent.val") == 1){
+    digitalWrite(ventilator, LOW);
+  }
+  else digitalWrite(ventilator, HIGH);
+}
+
+void trigger5(){  //Hand Freigabe Dosierung
+  if (myNex.readNumber("Manual_2.swDos.val") == 1){
+    DOSIERUNG = 1;
+  }
+  else DOSIERUNG = 0;
+}
+
+void trigger6(){  //Hand PH-Dosierung
+  if (myNex.readNumber("Manual_2.swPH.val") == 1){
+    digitalWrite(pumpPH, LOW);
+  }
+  else digitalWrite(pumpPH, HIGH);
+}
+
+void trigger7(){  //Hand Dünger-Dosierung
+  if (myNex.readNumber("Manual_2.swDung.val") == 1){
+    digitalWrite(pumpEC, LOW);
+  }
+  else digitalWrite(pumpEC, HIGH);
+}
+
+void trigger8(){  //Hand Pumpe Haupttank
+  if (myNex.readNumber("Manual_2.swPump.val") == 1){
+    digitalWrite(pumpNFT, LOW);
+  }
+  else digitalWrite(pumpNFT, HIGH);
+}
+
+void trigger9(){  //Zeitsteuerung NFT-Beleuchtung
+  Start_lightNFT_hour = myNex.readNumber("Times40.iLight40FH.val");
+  Start_lightNFT_minute = myNex.readNumber("Times40.iLight40FM.val");
+  Stopp_lightNFT_hour = myNex.readNumber("Times40.iLight40TH.val");
+  Stopp_lightNFT_minute = myNex.readNumber("Times40.iLight40TM.val");
+}
+
+void trigger10(){   //Zeitsteuerung Pumpe
+  iPumpOn = myNex.readNumber("TimesPump.iPumpOn.val");
+}
+
+void trigger11(){   //Zeitsteuerung Anzucht-Beleuchtung
+  Start_lightGrowing_hour = myNex.readNumber("Times20.iLight20FH.val");
+  Start_lightGrowing_minute = myNex.readNumber("Times20.iLight20FM.val");
+  Stopp_lightGrowing_hour = myNex.readNumber("Times20.iLight20TH.val");
+  Stopp_lightGrowing_minute = myNex.readNumber("Times20.iLight20TM.val");
+}
+
+void trigger12(){   //Sollwert Temperatur Pflanzen
+stSollPlantTemp = myNex.readStr("PlantTemp.tSollPlantTemp.txt");
+flSollPlantTemp = stSollPlantTemp.toFloat();
+}
+
+void trigger13(){   //Sollwert Feuchte Pflanzen
+stSollPlantMois = myNex.readStr("PlantMoisture.tSollPlantMois.txt");
+flSollPlantMois = stSollPlantMois.toFloat();
+}
+
+void trigger14(){   //Sollwert CO²
+stSollCO2 = myNex.readStr("CO2.tSollCO2.txt");
+flSollCO2 = stSollCO2.toFloat();
+}
+
+void trigger15(){   //Sollwert PH
+stSollPH = myNex.readStr("PH.tSollPH.txt");
+flSollPH = stSollPH.toFloat();
+}
+
+void trigger16(){   //Sollwert EC
+stSollEC = myNex.readStr("EC.tSollEC.txt");
+flSollEC = stSollEC.toFloat();
+}
+
+void trigger17(){   //Einlesen der Schalter-Zustände / Handbetrieb Seite 1
+myNex.writeNum("Manual.swAnlage.val", ANLAGE);
+myNex.writeNum("Manual.swLight20.val", !(digitalRead(lightGrowing)));
+myNex.writeNum("Manual.swLight40.val", !(digitalRead(lightNFT)));
+myNex.writeNum("Manual.swVent.val", !(digitalRead(ventilator)));
+}
+
+void trigger18(){   //Einlesen der Schalter-Zustände / Handbetrieb Seite 2
+myNex.writeNum("Manual_2.swDos.val", DOSIERUNG);
+myNex.writeNum("Manual_2.swPH.val", !(digitalRead(pumpPH)));
+myNex.writeNum("Manual_2.swDung.val", !(digitalRead(pumpEC)));
+myNex.writeNum("Manual_2.swPump.val", !(digitalRead(pumpNFT)));
+}
+
+void trigger19(){   //Standby-Zeit speichern
+  iStandby = myNex.readNumber("Settings.iStandby.val");
+}
+
+void trigger20(){   //Quittieren Button
+  Reset_Leakage = 1;
+}
+
+void SetAlarm(){
+  myNex.writeNum("Home.wav0.en", 1);
+  myNex.writeNum("Settings.wav0.en", 1);
+  myNex.writeNum("Indicator.wav0.en", 1);
+  myNex.writeNum("Menu.wav0.en", 1);
+  myNex.writeNum("Manual.wav0.en", 1);
+  myNex.writeNum("Manual_2.wav0.en", 1);
+  myNex.writeNum("Times40.wav0.en", 1);
+  myNex.writeNum("Times20.wav0.en", 1);
+  myNex.writeNum("TimesPump.wav0.en", 1);
+  myNex.writeNum("PlantTemp.wav0.en", 1);
+  myNex.writeNum("PlantMoisture.wav0.en", 1);
+  myNex.writeNum("CO2.wav0.en", 1);
+  myNex.writeNum("BotTemp.wav0.en", 1);
+  myNex.writeNum("PH.wav0.en", 1);
+  myNex.writeNum("EC.wav0.en", 1);
+  myNex.writeNum("TDS.wav0.en", 1);
+  myNex.writeNum("Tanklevel.wav0.en", 1);
+}
+
+void QuitAlarm(){
+  myNex.writeNum("Home.wav0.en", 0);
+  myNex.writeNum("Settings.wav0.en", 0);
+  myNex.writeNum("Indicator.wav0.en", 0);
+  myNex.writeNum("Menu.wav0.en", 0);
+  myNex.writeNum("Manual.wav0.en", 0);
+  myNex.writeNum("Manual_2.wav0.en", 0);
+  myNex.writeNum("Times40.wav0.en", 0);
+  myNex.writeNum("Times20.wav0.en", 0);
+  myNex.writeNum("TimesPump.wav0.en", 0);
+  myNex.writeNum("PlantTemp.wav0.en", 0);
+  myNex.writeNum("PlantMoisture.wav0.en", 0);
+  myNex.writeNum("CO2.wav0.en", 0);
+  myNex.writeNum("BotTemp.wav0.en", 0);
+  myNex.writeNum("PH.wav0.en", 0);
+  myNex.writeNum("EC.wav0.en", 0);
+  myNex.writeNum("TDS.wav0.en", 0);
+  myNex.writeNum("Tanklevel.wav0.en", 0);
+}
+
+void trigger21(){//Refresh Home
+myNex.writeStr("Home.tUhrzeit.txt", Uhrzeit);
+}
+
+void trigger22(){//Refresh Meldeliste
+myNex.writeNum("Indicator.pLeckage.pic", Pic_Leckage);
+myNex.writeNum("Home.bIndicator.pic", Pic_Indicator);
+}
+
+void trigger23(){//Refresh Zeiten Pumpe
+myNex.writeStr("TimesPump.tPumpOff.txt", stPumpOff);
+}
+
+void trigger24(){//Refresh Temperatur Pflanzen
+myNex.writeStr("PlantTemp.tIstPlantTemp.txt", stIstPlantTemp);
+}
+
+void trigger25(){//Refresh Feuchte Pflanzen
+myNex.writeStr("PlantMoisture.tIstPlantMois.txt", stIstPlantMois);
+}
+
+void trigger26(){//Refresh CO2
+myNex.writeStr("CO2.tIstCO2.txt", stIstCO2);
+}
+
+void trigger27(){//Refresh Luft Technik
+myNex.writeStr("BotTemp.tBotTemp.txt", stBotTemp);
+myNex.writeStr("BotTemp.tBotMois.txt", stBotMois); 
+}
+
+void trigger28(){//Refresh PH
+myNex.writeStr("PH.tIstPH.txt", stIstPH);
+}
+
+void trigger29(){//Refresh EC
+myNex.writeStr("EC.tIstEC.txt", stIstEC);
+}
+
+void trigger30(){//Refresh TDS
+myNex.writeStr("TDS.tTDSppm.txt", stTDS);
+myNex.writeStr("TDS.tWatertemp.txt", stWatertemp);
+}
+
+void trigger31(){//Refresh Tanklevel
+myNex.writeStr("Tanklevel.tTanklevel.txt", stTanklevel);
+}
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Füllstand auslesen
+//Variablen
+int duration=0 ;
+int distance= 0; //Entfernung in cm
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//6.Feste Variablen vor dem loop
+//Intervallzeitsteuerungen
+//z.B. Auslesen von Sensoren
+
+//Event 1 alle 5 Sekunden
+const unsigned long eventInterval1 = 5 * 1000UL;            //alle 5 Sekunden soll ein Event durchgeführt werden
+unsigned long previousTime1 = 0;                            //Speicherung der vorherigen Zeit1
+
+//Event 2 alle 3 Sekunden
+const unsigned long eventInterval2 = 3 * 1000UL;            //alle 3 Sekunden soll ein Event durchgeführt werden
+unsigned long previousTime2 = 0;                            //Speicherung der vorherigen Zeit2
+
+//Event 3 alle 2 Sekunden
+const unsigned long eventInterval3 = 2 * 1000UL;            //alle 2 Sekunden soll ein Event durchgeführt werden
+unsigned long previousTime3 = 0;                            //Speicherung der vorherigen Zeit3
+
+//Event 4 alle 2 Sekunden
+const unsigned long eventInterval4 = 1 * 1000UL;            //alle 2 Sekunden soll ein Event durchgeführt werden
+unsigned long previousTime4 = 0;                            //Speicherung der vorherigen Zeit3
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//Test
+void zeit(){
+//Übergabe der aktuellen Zeit
+DateTime now = rtc.now(); 
+iTimeH = now.hour();
+iTimeM = now.minute();
+
+}
+
+//Test LED
+bool hilfsmerkerLED;
+
+void test_LED(){
+  //Test LED
+  hilfsmerkerLED =! hilfsmerkerLED;
+  //Display
+  digitalWrite(LED,hilfsmerkerLED);
+}
+
+void time_to_string(){
+if(iTimeM > 10 && iTimeH >10){
+Uhrzeit = String(iTimeH) + ":" + String(iTimeM);
+}
+else if (iTimeM < 10 && iTimeH < 10){
+Uhrzeit = "0" + String(iTimeH) + ":" + "0" + String(iTimeM);
+}
+else if (iTimeM < 10){
+  Uhrzeit = String(iTimeH) + ":" + "0" + String(iTimeM);
+}
+else if (iTimeH < 10){
+  Uhrzeit = "0" + String(iTimeH) + ":" + String(iTimeM);
+}
+}
+//Hauptschleife
+void loop() {
+//Test
+//ANLAGE = 1;
+
+
+//Dauerhaft Übergaben und Abfragen 
+unsigned long currentTime = millis();   //Übergabe der Zeit für Abfragen über Milli() --> aktuelle Zeit ab Start des Microcontrollers
+
+//Übergabe der aktuellen Zeit
+DateTime now = rtc.now(); 
+iTimeH = now.hour();
+iTimeM = now.minute();
+
+//Leckageüberwachung
+leakageDetection();
+//--------------------------------------------------------------------------------------------------------------------------------
+//Füllstandsensor
+/* auskommentiert
+if (currentTime-previousMillisUltraSens >= intervalUltraSens) { //check "blink without delay" code
+		previousMillisUltraSens = currentTime;
+		if (trigStateUltraSens == LOW){
+			(trigStateUltraSens = HIGH);
+		}
+		else {
+			(trigStateUltraSens = LOW);
+		}
+	}
+	// printing if statement
+	if (currentTime-previousMillisUltraSens >= interval2UltraSens) { //check "blink without delay" code
+		previousMillisUltraSens = currentTime;
+		if (printStateUltraSens == LOW){
+			(printStateUltraSens = HIGH);
+      
+		}
+		else {
+			(printStateUltraSens = LOW);
+		}
+	}
+  digitalWrite(trigPin,trigStateUltraSens);
+	
+	duration = pulseIn(echoPin,HIGH);
+	distance = (duration/2) / 29.1;
+  
+	if (printStateUltraSens = HIGH && !(distance == 0)){
+  volume_tank_cal =volume_tank_ges - ((distance*breite*100 *tiefe*100) / 1000);
+  }
+//ultrasonic_measurement();
+ */ 
+//--------------------------------------------------------------------------------------------------------------------------------
+//Zyklisches Abfragen der Werte 
+if ((currentTime - previousTime1 >= eventInterval1) || (currentTime == 0)) {    //alle 5 Sekunden
+  GetEC();                                                                      //Aufruf und Abarbeitung für den EC-Wert  
+  average_calculation_EC();                                                     //Mittelwertberechnung
+  //Überprüfung des Wertes
+  //Serial.println(EC_at_25);
+  //Mittelwertbildung für Temperatur und Feuchte im NFT-Bereich
+  Average_Temp_System = (tempRoom2 + tempRoom3)/2;                //Temperaturmittelwert  von -16B1 und -17B1
+  Average_Moist_System = (humidityRoom2 + humidityRoom3)/2;       //Feuchtemittelwert     von -16B1 und -17B1                                                                                                 
+  previousTime1 = currentTime;                                    //Initalisierung der Anfangswert
+  }
+if ((currentTime - previousTime2 >= eventInterval2) || (currentTime == 0)) {        //alle 3 Sekunden
+  GetPH();                                                                          //PH-Wert generieren
+  //Kalibrierung PH
+  //Serial.println("Akutell:");
+  //Serial.println(pHValue);
+  previousTime2 = currentTime;                      //Initalisierung der Anfangswert
+  }
+if ((currentTime - previousTime3 >= eventInterval3) || (currentTime == 0)) {    //alle 2 Sekunden
+  //Technikebene DHT11 (-12B1)
+  Temp_Hum_Tech();                                  //Auslesen der Temperatur und Feuchte Technik
+  
+  //NFT-Bereich 
+  //-16B1 (DHT11)
+  Temp_Hum_NFT();                                   //Auslesen der Temperatur und Feuchte
+  //-17B1 (I2C)
+  airQuality();                                     //Auslesen der Temperatur, Feuchte, TVOC, CO2 
+  
+  //Übergabe der Texte auf dem NEXTION-Display
+  string_display();
+  
+  //Toggeln der StatusLED
+  test_LED();
+  previousTime3 = currentTime;                      //Initalisierung der Anfangswert
+  }
+
+//Provisorium 1s zyklus
+//if ((currentTime - previousTime4 >= eventInterval4) || (currentTime == 0)) {
+//leer 
+//previousTime4 = currentTime;                      //Initalisierung der Anfangswert
+//}
+//--------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------
+//Umwandlung der Uhrzeit zu Text für NEXTION DISPLAY
+time_to_string();
+//--------------------------------------------------------------------------------------------------------------------------------
+
+//Ablaufsteuerung
+//NEU: Zeitsteuerung und Ansteurung Hauptpumpe
+//NFTPumpOn();
+if (ANLAGE == 1){
+//NEUNEU
+  if(Merker_Leakage == false){
+    NFTPumpOn();
+  }
+  //Ansteuerung Ablüfter
+  Lueftung();
+  //Ansteuerung Licht über Uhrenkanäle
+  lightNFT_with_RTC(now);
+  lightGrowing_with_RTC(now);
+  //Dosierungen
+  if (DOSIERUNG==1 && Merker_Leakage == false && pumpNFTstatus==true){
+  //Dosierung der PH-Down-Lösung wird solange blockiert bis der gewünschte EC-Wert erreicht ist 
+    if(pHValue>flSollPH == true){ //&& pumpNFTstatus == true ){                                              //Grenzwertvergeben + Dosierung nur möglich wenn Zirkulationspumpe EIN
+      PHPumpOn();
+      PHDosageOn = true;
+      digitalWrite(pumpEC,HIGH);          //Ausschalten der Pumpe wenn PH-Wert für die Nährstoffdosierung angepasst wird
+      //Serial.println("PH EIN"); TEST
+    }
+    else{
+      PHDosageOn = false;
+      //Serial.println("PH AUS"); TEST
+    }
+    ////NEU: Zeitsteuerung und Ansteuerung EC-Dosierpumpe
+    if(averageEC<flSollEC == true && PHDosageOn ==false && pumpNFTstatus==true ){   
+      ECPumpOn();
+      //Serial.println("EC EIn"); TEST
+    }
+    else{
+      //Serial.println("EC AUS"); TEST
+    }
+  }       //ENDE DOSIERUNGEN
+}         //ENDE ANLAGE == 1
+//--------------------------------------------------------------------------------------------------------------------------------
+//Abfrage der Trigger-Funktionen
+ myNex.NextionListen();
+//--------------------------------------------------------------------------------------------------------------------------------
+//ENDLOOP
+return 0;
+} 
+
+
+//Timer für Dosierung
+ISR(TIMER1_OVF_vect)                              //Interruptbefehl bei erreichen von einer Sekunde
+{
+  TCNT1 = 0xC2F7;                                 //Startwert für Timer1 Register
+  zaehler_sek=zaehler_sek + 1;
+  if (zaehler_sek==60){
+    zaehler_sek = 0;
+    zaehler_min =zaehler_min + 1;
+  }
+  if (zaehler_min == 60){
+    zaehler_min = 0;
+    zaehler_hour= zaehler_hour+1; (Vorhaltung)
+  }
+  //Vorhaltung für Provisorische ZEIT
+  if (zaehler_hour == 24){
+    zaehler_hour = 0;
+    zaehler_day = zaehler_day + 1;
+  }
+}
+
+
+
+
