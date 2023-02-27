@@ -12,6 +12,12 @@
 //Biblitheken RTC
 #include <RTClib.h>   //Realtime-Clock
 
+//Akustik-Bibliotheken (Fehlerbehaftet)
+#define TONE_USE_INT
+#define TONE_PITCH 440
+//Bibliothek kümmern !!!!!!
+//#include <Pitch.h>
+
 //Bibliotheken für NEXTION-Display
 #include <EasyNextionLibrary.h>
 #include <Arduino.h>
@@ -145,7 +151,8 @@ void setup() {
 //Test LED
 pinMode(LED,OUTPUT);
 
-//EEPROM EINPFLEGEN
+//EEPROM EINPFLEGEN //Pascal
+getfromEEPROM();
 //Seriellen Schnittstellen
 Serial.begin (9600);                      //Beginn der Seriellen Schnittstelle / Bautrate: 9600
 myNex.begin(9600);                        //Beginn der Seriellen Schnittstelle fürs NEXTION-Display
@@ -163,12 +170,12 @@ if (! rtc.begin()) {
 }
 
 //Bedingung bei Spannungsausfall
-//if (rtc.lostPower()) {
-  //Serial.println("RTC lost power, let's set the time!");
+if (rtc.lostPower()) {
+  Serial.println("RTC lost power, let's set the time!");
   //Datum und Uhrzeit werden bei komplieren übertragen
   //Spannungsversorgung (Batterie) muss entfernt werden
-  //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-//}
+  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+}
 //Beispiel manuelles Einstellen der Uhrzeit
 // rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
 //--> 21. Januar 2014 3 Uhr in der Früh
@@ -510,6 +517,7 @@ Calibrate ((float )Temperature_end, (float) Temperature_begin);
 //Ermittlung des EC_Wertes über Widerstandsmessung
 //Variablen
 //Hinweis Variablen stehen über dem Setup da die Kalbirierungsfunktion mit denselben Variablen arbeitet
+//Test
 //Mittelwertbildung EC und TDS
 
 //Mittelwertbildung
@@ -692,8 +700,6 @@ humidityRoom3 = dht2.readHumidity();          //Auslesen der Feuchte
 //Variablen der Zeitsteuerung
 volatile int zaehler_sek =0;
 volatile int zaehler_min = 0 ; 
-
-//Vorhaltung für provisorische ZEIT
 volatile int zaehler_hour = 4;
 volatile int zaehler_day = 5;
 //----------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -762,9 +768,9 @@ else{
 //Intervallsteuerung der NFT-Hauptpumpe
 //Verhältnis von Ein- und Ausschaltzeit beträgt 2:1
 //Hauptpumpe NFT
-int minTimeNFT=2;                         //einstellbare Mindestzeit (Einschalten)
+int minTimeNFT=2;                         //einstellbare Mindestzeit
 int adjustableTimeNFT = iPumpOn;          //Einstellbare Zeit über Display
-int NFTEinschaltzeit = 2;                 //Einschaltzeit der einzelnen Fälle in der CASE-Struktur
+int NFTEinschaltzeit = 0;                 //Einschaltzeit der einzelnen Fälle in der CASE-Struktur
 //Flankeauswertung wenn jeweilige Zeit über Modulo verglichen
 int countNFT = 1;                         //Anfang der CASE-Struktur
 int stateNFT = LOW;                       //Status der NFT-Pumpe
@@ -775,9 +781,9 @@ void pumpTimeControlNFT(){
     if (iPumpOn <= minTimeNFT){                         //wenn eingestellt Zeit kleiner als Mindestzeit 
       NFTEinschaltzeit = minTimeNFT/2;                  //übernehme Mindestzeit
     } 
-    else if (iPumpOn==i){//(adjustableTimeNFT==i){      //wenn eingestellte Zeit zwischen Mindestzeit und 60 Minuten
-      NFTEinschaltzeit = (iPumpOn)/2;                   //übernehme Display Sollwert durch 2  
-    }                                                   //Verhältnis 2:1 (EIN/AUS)
+    else if (iPumpOn==i){//(adjustableTimeNFT==i){      //wenn eingestellte Zeit zwischen 1 und 60 
+      NFTEinschaltzeit = (iPumpOn)/2;                   //übernehme Display Sollwert   
+    }
   }
 }
 
@@ -817,7 +823,7 @@ return NFTEinschaltzeit;
 //Wartezeit der Dosierung
 int waitMinDosagePH=10;                            //Wartezeit                //Für Display eventuell --> Eingabe der Wartzeit in Minuten
 int proportionFixPH = waitMinDosagePH * 30;       //Wartezeit wird mit Faktor 30 Multipliziert --> hier Ergebnis: 150
-                                                  //Umrechnung von einer Minute über Modulofunktion --> 60 sek entspricht 30 Impulsen
+                                                  //
                                                   //Für die Anzeige auf dem Display --> Berechnung der Proportionalen Zeitsteuerung --> Wartezeit= proportionFix * adjustableTimePH / z.B. 5 Minuten entspricht proportion
                                                   //proportionFixPH = Wartezeit / AdjustableTimePH --> = (60s) / 2 = 30 (ERGEBNIS) --> pro Minute einen Faktor um 30 erhöhen
 int proportionPH = proportionFixPH;// +1;            //Verhältnis der Dosierung zu Warte zeit 1 / Proportion --> BSP.: 1 / 60 --> umso länger ich Dosiere umso länger wartet man !!!!
@@ -861,11 +867,10 @@ else{
     //abhängig vom counter passende funktion aufrufen
     switch(countPH) {
      case 1:    digitalWrite(pumpPH,LOW);
-                //Funktionstest
-                //Serial.print("Anzahl Dosierung PH: ");
-                //Serial.println(dosierungsanzahl++);
-                //Serial.println("PH-Wert: ");
-                //Serial.println(pHValue);
+                Serial.print("Anzahl Dosierung PH: ");
+                Serial.println(dosierungsanzahl++);
+                Serial.println("PH-Wert: ");
+                Serial.println(pHValue);
                 break; 
     default:    digitalWrite(pumpPH,HIGH);
                 break;
@@ -886,7 +891,7 @@ else{
 bool PHDosageOn = false;
 
 //Dosierung EC
-int waitMinDosageEC=15;                          //Wartezeit in Minuten zum Nachdosieren (Einstellbar über Display)
+int waitMinDosageEC=20;                          //Wartezeit in Minuten zum Nachdosieren (Einstellbar über Display)
 int proportionFixEC=waitMinDosageEC * 30;       //Für die Anzeige auf dem Display --> Berechnung der Proportionalen Zeitsteuerung --> Wartezeit= proportionFix * adjustableTimePH
 int proportionEC = proportionFixEC +1;          //Verhältnis der Dosierung zu Warte zeit 1 / Proportion --> BSP.: 1 / 60 --> umso länger ich Dosiere umso länger wartet man !!!!
 int minTimeEC=2;                                //Mindestzeit in Minuten (10 Minuten EIN / 5 Minuten AUS)
@@ -1009,14 +1014,14 @@ int iLight20TM = Stopp_lightGrowing_minute; //Anzucht Licht Einschaltdauer bis (
 float flSollPH = 6.5;   //Grenzwert PH
 float flSollEC = 0.8;   //Grenzwert EC
 
-//Texte
+//Texte //Pascal
 //Sollwert Temperatur, Feuchte und CO2 im NFT-Bereich
-String stSollPlantTemp = String(flSollPlantTemp); //Grenzwert Temperatur Pflanzen
-String stSollPlantMois = String(flSollPlantMois); //Grenzwert Feuchte Pflanzen
-String stSollCO2 = String(flSollCO2);             //Grenzwert CO2
+String stSollPlantTemp; //Grenzwert Temperatur Pflanzen
+String stSollPlantMois; //Grenzwert Feuchte Pflanzen
+String stSollCO2;             //Grenzwert CO2
 //Sollwert Dosierung
-String stSollPH = String(flSollPH); //Grenzwert PH
-String stSollEC = String(flSollEC); //Grenzwert EC
+String stSollPH; //Grenzwert PH
+String stSollEC; //Grenzwert EC
 
 //Übergabe Messwerte
 //Mittelwert NFT-Bereich
@@ -1038,11 +1043,6 @@ String stPumpOff = String (NFTEinschaltzeit); //Einschaltzeit NFT-Pumpe
 
 //Übergabe der Werte zur Visualisierung
 void string_display(){
-//stSollPlantTemp = String(flSollPlantTemp); //Grenzwert Temperatur Pflanzen
-//stSollPlantMois = String(flSollPlantMois); //Grenzwert Feuchte Pflanzen
-//stSollCO2 = String(flSollCO2); //Grenzwert CO2
-//stSollPH = String(flSollPH); //Grenzwert PH
-//stSollEC = String(flSollEC); //Grenzwert EC
 //Messwerte
 stIstPlantTemp = String(Average_Temp_System);   //Istwert Temperatur Pflanzen
 stIstPlantMois = String(Average_Moist_System);  //Istwert Feuchte Pflanzen
@@ -1062,8 +1062,7 @@ stPumpOff = String (NFTEinschaltzeit);          //Einschaltzeit NFT-Pumpe
 void trigger0(){  //Uhrzeit speichern
   iTimeH = myNex.readNumber("Settings.iSetTimeH.val");
   iTimeM = myNex.readNumber("Settings.iSetTimeM.val");
-  //Auskommentiert Versuch Fehlerbehebung 
-  //rtc.adjust(DateTime(0, 0, 0, iTimeH, iTimeM, 0));
+  rtc.adjust(DateTime(0, 0, 0, iTimeH, iTimeM, 0));
   //Uhrzeit = String(iTimeH) + ":" + String(iTimeM);
 }
 
@@ -1128,10 +1127,16 @@ void trigger9(){  //Zeitsteuerung NFT-Beleuchtung
   Start_lightNFT_minute = myNex.readNumber("Times40.iLight40FM.val");
   Stopp_lightNFT_hour = myNex.readNumber("Times40.iLight40TH.val");
   Stopp_lightNFT_minute = myNex.readNumber("Times40.iLight40TM.val");
+  EEPROM.update(0, Start_lightNFT_hour);//Pascal
+  EEPROM.update(1, Start_lightNFT_minute);
+  EEPROM.update(2, Stopp_lightNFT_hour);
+  EEPROM.update(3, Stopp_lightNFT_minute);
+
 }
 
 void trigger10(){   //Zeitsteuerung Pumpe
   iPumpOn = myNex.readNumber("TimesPump.iPumpOn.val");
+  EEPROM.update(4, iPumpOn); //Pascal
 }
 
 void trigger11(){   //Zeitsteuerung Anzucht-Beleuchtung
@@ -1139,31 +1144,40 @@ void trigger11(){   //Zeitsteuerung Anzucht-Beleuchtung
   Start_lightGrowing_minute = myNex.readNumber("Times20.iLight20FM.val");
   Stopp_lightGrowing_hour = myNex.readNumber("Times20.iLight20TH.val");
   Stopp_lightGrowing_minute = myNex.readNumber("Times20.iLight20TM.val");
+  EEPROM.update(5, Start_lightGrowing_hour);//Pascal
+  EEPROM.update(6, Start_lightGrowing_minute);
+  EEPROM.update(7, Stopp_lightGrowing_hour);
+  EEPROM.update(8, Stopp_lightGrowing_minute);
 }
 
 void trigger12(){   //Sollwert Temperatur Pflanzen
 stSollPlantTemp = myNex.readStr("PlantTemp.tSollPlantTemp.txt");
 flSollPlantTemp = stSollPlantTemp.toFloat();
+EEPROM.update(9, flSollPlantTemp);//Pascal
 }
 
 void trigger13(){   //Sollwert Feuchte Pflanzen
 stSollPlantMois = myNex.readStr("PlantMoisture.tSollPlantMois.txt");
 flSollPlantMois = stSollPlantMois.toFloat();
+EEPROM.update(10, flSollPlantMois);//Pascal
 }
 
 void trigger14(){   //Sollwert CO²
 stSollCO2 = myNex.readStr("CO2.tSollCO2.txt");
 flSollCO2 = stSollCO2.toFloat();
+EEPROM.update(11, flSollCO2);//Pascal
 }
 
 void trigger15(){   //Sollwert PH
 stSollPH = myNex.readStr("PH.tSollPH.txt");
 flSollPH = stSollPH.toFloat();
+EEPROM.update(12, flSollPH);//Pascal
 }
 
 void trigger16(){   //Sollwert EC
 stSollEC = myNex.readStr("EC.tSollEC.txt");
 flSollEC = stSollEC.toFloat();
+EEPROM.update(13, flSollEC);//Pascal
 }
 
 void trigger17(){   //Einlesen der Schalter-Zustände / Handbetrieb Seite 1
@@ -1182,50 +1196,11 @@ myNex.writeNum("Manual_2.swPump.val", !(digitalRead(pumpNFT)));
 
 void trigger19(){   //Standby-Zeit speichern
   iStandby = myNex.readNumber("Settings.iStandby.val");
+  EEPROM.update(14, iStandby);//Pascal
 }
 
 void trigger20(){   //Quittieren Button
   Reset_Leakage = 1;
-}
-
-void SetAlarm(){
-  myNex.writeNum("Home.wav0.en", 1);
-  myNex.writeNum("Settings.wav0.en", 1);
-  myNex.writeNum("Indicator.wav0.en", 1);
-  myNex.writeNum("Menu.wav0.en", 1);
-  myNex.writeNum("Manual.wav0.en", 1);
-  myNex.writeNum("Manual_2.wav0.en", 1);
-  myNex.writeNum("Times40.wav0.en", 1);
-  myNex.writeNum("Times20.wav0.en", 1);
-  myNex.writeNum("TimesPump.wav0.en", 1);
-  myNex.writeNum("PlantTemp.wav0.en", 1);
-  myNex.writeNum("PlantMoisture.wav0.en", 1);
-  myNex.writeNum("CO2.wav0.en", 1);
-  myNex.writeNum("BotTemp.wav0.en", 1);
-  myNex.writeNum("PH.wav0.en", 1);
-  myNex.writeNum("EC.wav0.en", 1);
-  myNex.writeNum("TDS.wav0.en", 1);
-  myNex.writeNum("Tanklevel.wav0.en", 1);
-}
-
-void QuitAlarm(){
-  myNex.writeNum("Home.wav0.en", 0);
-  myNex.writeNum("Settings.wav0.en", 0);
-  myNex.writeNum("Indicator.wav0.en", 0);
-  myNex.writeNum("Menu.wav0.en", 0);
-  myNex.writeNum("Manual.wav0.en", 0);
-  myNex.writeNum("Manual_2.wav0.en", 0);
-  myNex.writeNum("Times40.wav0.en", 0);
-  myNex.writeNum("Times20.wav0.en", 0);
-  myNex.writeNum("TimesPump.wav0.en", 0);
-  myNex.writeNum("PlantTemp.wav0.en", 0);
-  myNex.writeNum("PlantMoisture.wav0.en", 0);
-  myNex.writeNum("CO2.wav0.en", 0);
-  myNex.writeNum("BotTemp.wav0.en", 0);
-  myNex.writeNum("PH.wav0.en", 0);
-  myNex.writeNum("EC.wav0.en", 0);
-  myNex.writeNum("TDS.wav0.en", 0);
-  myNex.writeNum("Tanklevel.wav0.en", 0);
 }
 
 void trigger21(){//Refresh Home
@@ -1275,6 +1250,63 @@ void trigger31(){//Refresh Tanklevel
 myNex.writeStr("Tanklevel.tTanklevel.txt", stTanklevel);
 }
 
+void SetAlarm(){
+  myNex.writeNum("Home.wav0.en", 1);
+  myNex.writeNum("Settings.wav0.en", 1);
+  myNex.writeNum("Indicator.wav0.en", 1);
+  myNex.writeNum("Menu.wav0.en", 1);
+  myNex.writeNum("Manual.wav0.en", 1);
+  myNex.writeNum("Manual_2.wav0.en", 1);
+  myNex.writeNum("Times40.wav0.en", 1);
+  myNex.writeNum("Times20.wav0.en", 1);
+  myNex.writeNum("TimesPump.wav0.en", 1);
+  myNex.writeNum("PlantTemp.wav0.en", 1);
+  myNex.writeNum("PlantMoisture.wav0.en", 1);
+  myNex.writeNum("CO2.wav0.en", 1);
+  myNex.writeNum("BotTemp.wav0.en", 1);
+  myNex.writeNum("PH.wav0.en", 1);
+  myNex.writeNum("EC.wav0.en", 1);
+  myNex.writeNum("TDS.wav0.en", 1);
+  myNex.writeNum("Tanklevel.wav0.en", 1);
+}
+
+void QuitAlarm(){
+  myNex.writeNum("Home.wav0.en", 0);
+  myNex.writeNum("Settings.wav0.en", 0);
+  myNex.writeNum("Indicator.wav0.en", 0);
+  myNex.writeNum("Menu.wav0.en", 0);
+  myNex.writeNum("Manual.wav0.en", 0);
+  myNex.writeNum("Manual_2.wav0.en", 0);
+  myNex.writeNum("Times40.wav0.en", 0);
+  myNex.writeNum("Times20.wav0.en", 0);
+  myNex.writeNum("TimesPump.wav0.en", 0);
+  myNex.writeNum("PlantTemp.wav0.en", 0);
+  myNex.writeNum("PlantMoisture.wav0.en", 0);
+  myNex.writeNum("CO2.wav0.en", 0);
+  myNex.writeNum("BotTemp.wav0.en", 0);
+  myNex.writeNum("PH.wav0.en", 0);
+  myNex.writeNum("EC.wav0.en", 0);
+  myNex.writeNum("TDS.wav0.en", 0);
+  myNex.writeNum("Tanklevel.wav0.en", 0);
+}
+
+void getfromEEPROM(){//Pascal
+  Start_lightNFT_hour = EEPROM.read(0);
+  Start_lightNFT_minute = EEPROM.read(1);
+  Stopp_lightNFT_hour = EEPROM.read(2);
+  Stopp_lightNFT_minute = EEPROM.read(3);
+  iPumpOn = EEPROM.read(4);
+  Start_lightGrowing_hour = EEPROM.read(5);
+  Start_lightGrowing_minute = EEPROM.read(6);
+  Stopp_lightGrowing_hour = EEPROM.read(7);
+  Stopp_lightGrowing_minute = EEPROM.read(8);
+  flSollPlantTemp = EEPROM.read(9);
+  flSollPlantMois = EEPROM.read(10);
+  flSollCO2 = EEPROM.read(11);
+  flSollPH = EEPROM.read(12);
+  flSollEC = EEPROM.read(13);
+  iStandby = EEPROM.read(14);
+}
 //----------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Füllstand auslesen
 //Variablen
@@ -1323,20 +1355,6 @@ void test_LED(){
   digitalWrite(LED,hilfsmerkerLED);
 }
 
-void time_to_string(){
-if(iTimeM > 10 && iTimeH >10){
-Uhrzeit = String(iTimeH) + ":" + String(iTimeM);
-}
-else if (iTimeM < 10 && iTimeH < 10){
-Uhrzeit = "0" + String(iTimeH) + ":" + "0" + String(iTimeM);
-}
-else if (iTimeM < 10){
-  Uhrzeit = String(iTimeH) + ":" + "0" + String(iTimeM);
-}
-else if (iTimeH < 10){
-  Uhrzeit = "0" + String(iTimeH) + ":" + String(iTimeM);
-}
-}
 //Hauptschleife
 void loop() {
 //Test
@@ -1424,14 +1442,25 @@ if ((currentTime - previousTime3 >= eventInterval3) || (currentTime == 0)) {    
   }
 
 //Provisorium 1s zyklus
-//if ((currentTime - previousTime4 >= eventInterval4) || (currentTime == 0)) {
+if ((currentTime - previousTime4 >= eventInterval4) || (currentTime == 0)) {
 //leer 
-//previousTime4 = currentTime;                      //Initalisierung der Anfangswert
-//}
+previousTime4 = currentTime;                      //Initalisierung der Anfangswert
+}
 //--------------------------------------------------------------------------------------------------------------------------------
 //--------------------------------------------------------------------------------------------------------------------------------
-//Umwandlung der Uhrzeit zu Text für NEXTION DISPLAY
-time_to_string();
+
+if(iTimeM > 10 && iTimeH >10){
+Uhrzeit = String(iTimeH) + ":" + String(iTimeM);
+}
+else if (iTimeM < 10 && iTimeH < 10){
+Uhrzeit = "0" + String(iTimeH) + ":" + "0" + String(iTimeM);
+}
+else if (iTimeM < 10){
+  Uhrzeit = String(iTimeH) + ":" + "0" + String(iTimeM);
+}
+else if (iTimeH < 10){
+  Uhrzeit = "0" + String(iTimeH) + ":" + String(iTimeM);
+}
 //--------------------------------------------------------------------------------------------------------------------------------
 
 //Ablaufsteuerung
@@ -1470,6 +1499,20 @@ if (ANLAGE == 1){
     }
   }       //ENDE DOSIERUNGEN
 }         //ENDE ANLAGE == 1
+//else{
+  //negative Flanke
+  
+  //Handübersteuerung EIN wenn Handbetrieb gewollt und Uhrenkanal
+  //lightGrowing_with_RTC(now);
+  /*
+  digitalWrite(pumpNFT,HIGH);
+  digitalWrite(pumpEC,HIGH);
+  digitalWrite(pumpPH,HIGH);
+  digitalWrite(lightNFT,HIGH);
+  digitalWrite(lightGrowing,HIGH);
+  digitalWrite(ventilator,HIGH);
+  */
+//}
 //--------------------------------------------------------------------------------------------------------------------------------
 //Abfrage der Trigger-Funktionen
  myNex.NextionListen();
@@ -1490,15 +1533,10 @@ ISR(TIMER1_OVF_vect)                              //Interruptbefehl bei erreiche
   }
   if (zaehler_min == 60){
     zaehler_min = 0;
-    zaehler_hour= zaehler_hour+1; (Vorhaltung)
+    zaehler_hour= zaehler_hour+1;
   }
-  //Vorhaltung für Provisorische ZEIT
   if (zaehler_hour == 24){
     zaehler_hour = 0;
     zaehler_day = zaehler_day + 1;
   }
 }
-
-
-
-
