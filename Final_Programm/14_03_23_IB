@@ -45,7 +45,7 @@ const int echoPin = 26;
 //-------------------------------------------------------------------------------------------------------------------------------------
 //PH-Messung
 #define SensorPin A0          //Analoger Eingang für das Auslesen des pH-Wertes
-#define offsetPH -0.3           //Abweichung hier kompensieren davor 0.3 --> eingestellt nach erneuter Kalibrierung -0.2
+#define offsetPH 0           //Abweichung hier kompensieren --> eingestellt nach erneuter Kalibrierung -0.2
 #define ArrayLenthPH 10        //Anzahl der Datenspeicher im Array um den Mittelwert des PH-Wertes zu ermitteln
 //-------------------------------------------------------------------------------------------------------------------------------------
 //Leckageüberwachung
@@ -111,7 +111,7 @@ float offsetTempEC=-0.3;              //Temperaturoffset --> abgeglichen mit EC/
 //Variablen für die EC-Messung
 float Temperature;  //gemessene Temperatur über Terminalfühler
 float EC;           //Errechneter EC-Wert
-float offsetEC = -0.16;    //Kompenstation EC (invertierte Logik)
+float offsetEC = -0.10;    //Kompenstation EC (invertierte Logik)
 float EC_at_25 = 0;       //EC-Wert bei 25 Grad
 int ppm;            //Errechneter Wert der Anzahl der Teilchen der Lösung in PartsPerMillion
 float A_to_D= 0;    //was Ist das genau
